@@ -43,7 +43,7 @@ impl TextGeneration {
         println!("开始处理提示词...");
         
         
-        let tokens = self
+        let tokens: Vec<u32> = self
             .tokenizer
             .encode(prompt, false)
             .map_err(E::msg)?
@@ -57,7 +57,7 @@ impl TextGeneration {
         std::io::stdout().flush()?;
 
         for index in 0..sample_len {
-            let context_size = if index > 0 { 1 } else { all_tokens.len() };
+            let context_size: usize = if index > 0 { 1 } else { all_tokens.len() };
             let start_pos = all_tokens.len().saturating_sub(context_size);
             let ctxt = &all_tokens[start_pos..];
             
@@ -80,24 +80,20 @@ impl TextGeneration {
             generated_text += 1;
             
             // 解码并打印新生成的 token
-            if let Ok(text) = self.tokenizer.decode(&[next_token], true) {
+            if let Ok(text) = self.tokenizer.decode(&[next_token], false) {
+
+                if text == "<endoftext>" || text == "<|im_end|>" {
+                    println!("\n=== 生成结束 ===");
+                    break;
+                }
                 print!("{}", text);
                 std::io::stdout().flush()?;
+                
                 //generated_text.push_str(&text);
             }
 
-            // 检查是否遇到结束 token
-            if let Some(eos_token) = self.tokenizer.get_vocab(true).get("</s>") {
-                if next_token == *eos_token {
-                    break;
-                }
-            }
         }
         
-        println!(
-            "\n{generated_text} tokens generated ({:.2} token/s)",
-            generated_text as f64,
-        );
         println!("\n");
         Ok(generated_text)
     }
