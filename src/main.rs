@@ -14,6 +14,7 @@ struct TextGeneration {
     logits_processor: LogitsProcessor,
     repeat_penalty: f32,
     repeat_last_n: usize,
+    last_token: String,
 }
 
 impl TextGeneration {
@@ -35,33 +36,57 @@ impl TextGeneration {
             repeat_penalty,
             repeat_last_n,
             device: device.clone(),
+            last_token: String::new(),
         }
     }
 
-    fn run(&mut self, prompt: &str, sample_len: usize) -> Result<usize> {
+    fn run(&mut self, prompt: &str, sample_len: usize) -> Result<()> {
+
+        println!("提示词长度: {} 字符", self.tokenizer.encode(prompt, true).map_err(E::msg)?.get_ids().len());
+        println!("生成长度: {} 字符", self.tokenizer.encode(self.last_token.clone(), true).map_err(E::msg)?.get_ids().len());
+
         use std::io::Write;
         println!("开始处理提示词...");
-        
+
+        let all_prompt = format!("{}{}",self.last_token, prompt);
         
         let tokens: Vec<u32> = self
             .tokenizer
-            .encode(prompt, false)
+            .encode(all_prompt, true)
             .map_err(E::msg)?
             .get_ids()
             .to_vec();
         
         let mut all_tokens = tokens.clone();
-        let mut generated_text = 0usize;
 
         println!("生成中: ");
         std::io::stdout().flush()?;
 
+
+        let is_first = self.last_token.is_empty();
+
+        self.last_token.push_str(prompt);
+
         for index in 0..sample_len {
-            let context_size: usize = if index > 0 { 1 } else { all_tokens.len() };
-            let start_pos = all_tokens.len().saturating_sub(context_size);
+            let mut context_size: usize = if index > 0 { 1 } else { all_tokens.len() };
+            context_size = if !is_first && context_size != 1 {
+                println!("非首次生成，上下文大小调整为: {}", self.tokenizer.encode(prompt, true).map_err(E::msg)?.get_ids().len());
+                self.tokenizer.encode(prompt, true).map_err(E::msg)?.get_ids().len()
+            } else {
+                context_size
+            };
+{}          let start_pos = all_tokens.len().saturating_sub(context_size);
+            //let start_pos = all_tokens.len();
             let ctxt = &all_tokens[start_pos..];
+
+            println!("当前上下文大小: {}, 位置: {}", ctxt.len(), start_pos);
             
             let input = Tensor::new(ctxt, &self.device)?.unsqueeze(0)?;
+            // let logits = if is_first {
+            //     self.model.forward(&input, start_pos)?
+            // } else {
+            //     self.model.forward(&input, start_pos + self.last_token.chars().count())?
+            // };
             let logits = self.model.forward(&input, start_pos)?;
             let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
             let logits = if self.repeat_penalty == 1. {
@@ -77,25 +102,24 @@ impl TextGeneration {
 
             let next_token = self.logits_processor.sample(&logits)?;
             all_tokens.push(next_token);
-            generated_text += 1;
             
             // 解码并打印新生成的 token
             if let Ok(text) = self.tokenizer.decode(&[next_token], false) {
-
+                
                 if text == "<endoftext>" || text == "<|im_end|>" {
                     println!("\n=== 生成结束 ===");
                     break;
                 }
+                self.last_token.push_str(&text);
                 print!("{}", text);
                 std::io::stdout().flush()?;
                 
-                //generated_text.push_str(&text);
             }
 
         }
         
         println!("\n");
-        Ok(generated_text)
+        Ok(())
     }
 }
 
@@ -154,6 +178,8 @@ fn main() -> Result<()> {
     println!("初始化完成！开始对话...\n");
     println!("输入 'quit' 或 'exit' 退出程序\n");
 
+    let mut all_text = String::new();
+
     // 交互式对话循环
     loop {
         print!("用户: ");
@@ -174,6 +200,8 @@ fn main() -> Result<()> {
 
         // 构建对话格式的提示词
         let prompt = format!("<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n", input);
+
+        all_text.push_str(&prompt);
 
         print!("助手: ");
         std::io::stdout().flush()?;
